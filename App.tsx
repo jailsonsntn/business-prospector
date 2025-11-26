@@ -40,7 +40,7 @@ const App: React.FC = () => {
         setError(null);
         setIsLocating(false);
       },
-      (geoError) => {
+      () => {
         setError(
           'Acesso à localização negado. Por favor, habilite a permissão de localização no seu navegador para encontrar estabelecimentos próximos.'
         );
@@ -74,7 +74,7 @@ const App: React.FC = () => {
         query, 
         location, 
         filters, 
-        (count, total) => {
+        () => {
           // Feedback de progresso
           setLoadingMessage(`Processando setores... Análise de dados em andamento.`);
         }

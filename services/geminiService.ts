@@ -1,8 +1,7 @@
-
 import { GoogleGenAI } from "@google/genai";
 import type { Place, Location, FilterOptions } from '../types';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // Estratégias para diversificar os resultados quando fazemos requisições paralelas
 const SEARCH_STRATEGIES = [

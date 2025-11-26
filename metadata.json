@@ -1,0 +1,7 @@
+{
+  "name": "Prospector de Negócios",
+  "description": "Um aplicativo para encontrar informações de contato de negócios locais usando a API Gemini com Google Maps, para prospecção de marketing.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

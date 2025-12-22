@@ -1,14 +1,21 @@
+
 import { GoogleGenAI } from "@google/genai";
 import type { Place, Location, FilterOptions } from '../types';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-// Estratégias para diversificar os resultados quando fazemos requisições paralelas
-const SEARCH_STRATEGIES = [
-  "Foque nos estabelecimentos mais populares, bem avaliados e consolidados da região.",
-  "Foque estritamente em 'Hidden Gems' (joias escondidas), novos negócios e estabelecimentos com poucas avaliações online.",
-  "Foque em estabelecimentos localizados nos bairros periféricos ou zonas adjacentes ao centro da localização.",
-  "Foque em nichos específicos e serviços especializados dentro desta categoria de negócio."
+// MUDANÇA CRÍTICA: Segmentação Alfabética.
+// Em vez de conceitos abstratos, dividimos a busca em fatias do alfabeto.
+// Isso força o Google Maps a retornar resultados diferentes em cada requisição paralela.
+const SEARCH_SEGMENTS = [
+  "cujos nomes começam com as letras A, B, C ou D",
+  "cujos nomes começam com as letras E, F, G ou H",
+  "cujos nomes começam com as letras I, J, K ou L",
+  "cujos nomes começam com as letras M, N, O, P ou Q",
+  "cujos nomes começam com as letras R, S, T, U ou V",
+  "cujos nomes começam com as letras W, X, Y, Z ou números",
+  "que são novos ou pouco avaliados (Hidden Gems)",
+  "que estão localizados em bairros periféricos"
 ];
 
 export const findPlaces = async (
@@ -21,31 +28,32 @@ export const findPlaces = async (
     throw new Error("O termo de busca é obrigatório.");
   }
 
-  const BATCH_SIZE = 50; // O Gemini lida bem com ~50 itens por prompt
-  const totalRequested = filters.pageSize;
+  // Define o tamanho do lote. Pedimos 30 por letra/segmento para garantir densidade.
+  const BATCH_SIZE = 30; 
   
-  // Calculamos quantos lotes paralelos precisamos (ex: 200 resultados = 4 lotes)
-  const numberOfBatches = Math.ceil(totalRequested / BATCH_SIZE);
+  // Define quantos segmentos usar baseados na meta total
+  // Se o usuário quer 50, usamos 2 segmentos. Se quer 200, usamos todos os 8 segmentos disponíveis.
+  const totalRequested = filters.pageSize;
+  let numberOfSegmentsToUse = Math.ceil(totalRequested / 20); // Aprox 20 resultados úteis por segmento
+  if (numberOfSegmentsToUse > SEARCH_SEGMENTS.length) numberOfSegmentsToUse = SEARCH_SEGMENTS.length;
   
   const promises = [];
 
-  for (let i = 0; i < numberOfBatches; i++) {
-    // Atribuímos uma estratégia diferente para cada lote para evitar duplicatas
-    const strategy = SEARCH_STRATEGIES[i % SEARCH_STRATEGIES.length];
+  for (let i = 0; i < numberOfSegmentsToUse; i++) {
+    const segment = SEARCH_SEGMENTS[i];
     
-    // Dispara a promessa sem await (paralelismo)
+    // Dispara a promessa sem await (paralelismo real)
     promises.push(
-      fetchBatch(query, location, filters, strategy, BATCH_SIZE)
+      fetchBatch(query, location, filters, segment, BATCH_SIZE)
         .then(results => {
-           // Opcional: Notificar progresso parcial (embora impreciso no paralelismo total, dá feedback)
-           if (onProgress) onProgress((i + 1) * BATCH_SIZE, totalRequested);
+           // Notifica progresso visualmente
+           if (onProgress) onProgress((i + 1) * 20, totalRequested);
            return results;
         })
     );
   }
 
   try {
-    // Aguarda todas as requisições paralelas terminarem (seja sucesso ou falha)
     const results = await Promise.allSettled(promises);
     
     const allPlaces: Place[] = [];
@@ -53,19 +61,17 @@ export const findPlaces = async (
     results.forEach((result) => {
       if (result.status === 'fulfilled') {
         allPlaces.push(...result.value);
-      } else {
-        console.error("Um dos lotes falhou:", result.reason);
       }
     });
 
-    // Deduplicação baseada no nome normalizado
+    // Deduplicação robusta
     const uniquePlaces = Array.from(new Map(allPlaces.map(item => [item.nome.toLowerCase().trim(), item])).values());
 
     return uniquePlaces;
 
   } catch (error) {
-    console.error("Erro fatal na orquestração da busca:", error);
-    throw new Error("Falha ao processar as buscas paralelas.");
+    console.error("Erro na busca paralela:", error);
+    throw new Error("Falha ao processar as buscas.");
   }
 };
 
@@ -73,67 +79,77 @@ async function fetchBatch(
   query: string, 
   location: Location, 
   filters: FilterOptions, 
-  strategy: string,
+  segment: string,
   batchSize: number
 ): Promise<Place[]> {
   
-  let locationPromptPart = `próximos à latitude ${location.latitude} e longitude ${location.longitude}`;
+  const city = filters.city.trim();
+  const state = filters.state.trim();
 
-  if (filters.city.trim() && filters.state.trim()) {
-    locationPromptPart = `na cidade de ${filters.city}, estado de ${filters.state}`;
-  } else if (filters.radius > 0) {
-    locationPromptPart = `num raio de ${filters.radius}km a partir da latitude ${location.latitude} e longitude ${location.longitude}`;
+  let locationContext = '';
+  const requestConfig: any = {
+    tools: [
+      { googleMaps: {} }, 
+      { googleSearch: {} }
+    ]
+  };
+
+  // Lógica de Localização
+  if (city || state) {
+    // Busca por Texto (Global)
+    const parts = [];
+    if (city) parts.push(`cidade de ${city}`);
+    if (state) parts.push(`estado de ${state}`);
+    locationContext = `localizados em: ${parts.join(', ')}`;
+  } else {
+    // Busca por GPS (Local)
+    const radius = filters.radius > 0 ? filters.radius : 10;
+    locationContext = `num raio de ${radius}km da minha localização atual`;
+    
+    requestConfig.toolConfig = {
+      retrievalConfig: {
+        latLng: {
+          latitude: location.latitude,
+          longitude: location.longitude,
+        },
+      },
+    };
   }
 
+  // Prompt Otimizado para Volume e Segmentação
   const prompt = `
-    Atue como um especialista Sênior em OSINT (Open Source Intelligence).
+    Atue como um gerador de leads focado em volume.
     
-    MISSÃO:
-    Encontrar uma lista de ${batchSize} estabelecimentos do tipo "${query}" ${locationPromptPart}.
-    
-    ESTRATÉGIA DESTE LOTE (IMPORTANTE):
-    ${strategy}
-    (Use esta estratégia para encontrar resultados únicos que não apareceriam em uma busca genérica).
+    OBJETIVO:
+    Encontrar lista de negócios do tipo "${query}" ${segment}.
+    ${locationContext}
 
-    INSTRUÇÕES DE MINERAÇÃO:
-    1. **Geolocalização:** Valide a existência no Google Maps.
-    2. **E-mail (Prioridade):** Use o Google Search para varrer rodapés de sites, páginas de contato, Instagram e Facebook Bios em busca de e-mails.
-    3. **Dados de Contato:** Formate telefones como (XX) XXXXX-XXXX.
-    4. **Redes Sociais:** Inclua links diretos para Instagram, Facebook e LinkedIn se encontrar.
+    INSTRUÇÕES ESTRITAS:
+    1. SEGMENTAÇÃO OBRIGATÓRIA: Você DEVE focar apenas em negócios ${segment}. Não traga os mesmos lugares famosos de sempre. Varra o mapa.
+    2. QUANTIDADE: Liste pelo menos ${batchSize} locais únicos.
+    3. DADOS: O foco é NOME e TELEFONE.
+       - Se não achar email/social, deixe null. NÃO EXCLUA O LOCAL DA LISTA.
+       - Queremos volume de contatos telefônicos.
+    4. PESQUISA: Use o Google Maps para achar os locais e o Google Search APENAS se precisar confirmar um telefone difícil.
 
-    FORMATO DE SAÍDA JSON:
+    SAÍDA JSON (ARRAY):
     [
       {
-        "nome": "Nome da Empresa",
-        "telefone": "(XX) XXXXX-XXXX",
-        "email": "email@dominio.com",
-        "instagram": "url",
-        "facebook": "url",
-        "linkedin": "url"
+        "nome": "Nome Exato",
+        "telefone": "(XX) XXXX-XXXX ou null",
+        "email": "email ou null",
+        "instagram": "url ou null",
+        "facebook": "url ou null",
+        "linkedin": "url ou null"
       }
     ]
-    
-    Retorne APENAS o JSON.
   `;
 
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: prompt,
-      config: {
-        tools: [
-          { googleMaps: {} }, 
-          { googleSearch: {} }
-        ],
-        toolConfig: {
-          retrievalConfig: {
-            latLng: {
-              latitude: location.latitude,
-              longitude: location.longitude,
-            },
-          },
-        },
-      },
+      config: requestConfig,
     });
 
     const rawText = response.text;
@@ -144,7 +160,6 @@ async function fetchBatch(
     return JSON.parse(jsonMatch[0]) as Place[];
 
   } catch (e) {
-    console.warn("Erro em um lote específico (ignorado para não quebrar o fluxo):", e);
     return [];
   }
 }

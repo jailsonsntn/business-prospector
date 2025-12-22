@@ -18,25 +18,39 @@ const radiusOptions = [
   { value: 50, label: '50 km' },
 ];
 
-const pageSizeOptions = [50, 100, 200];
+// Opções aumentadas conforme solicitado
+const pageSizeOptions = [50, 100, 200, 300, 400, 500];
 
 export const FilterControls: React.FC<FilterControlsProps> = ({ filters, onFilterChange, disabled, darkMode }) => {
-    const handleCityStateChange = () => {
-        if (filters.radius !== 0) {
-            onFilterChange({ radius: 0 });
-        }
-    };
     
-    const handleRadiusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const newRadius = parseInt(e.target.value, 10);
-        onFilterChange({ 
-            radius: newRadius,
-            city: '',
-            state: '',
-        });
+    // Função para manipular mudanças em Cidade/Estado
+    const handleLocationTextChange = (field: 'city' | 'state', value: string) => {
+        const updates: Partial<FilterOptions> = { [field]: value };
+        
+        // Se o usuário começar a digitar Cidade ou Estado, o Raio GPS perde o sentido.
+        // Resetamos para 0 automaticamente.
+        if (value.trim() !== '') {
+            updates.radius = 0;
+        }
+
+        onFilterChange(updates);
     };
 
-    const hasCityStateFilter = filters.city.trim() !== '' || filters.state.trim() !== '';
+    const handleRadiusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        const newRadius = parseInt(e.target.value, 10);
+        // Se selecionar um raio, limpa cidade e estado para evitar conflito
+        if (newRadius > 0) {
+            onFilterChange({ 
+                radius: newRadius,
+                city: '',
+                state: '',
+            });
+        } else {
+            onFilterChange({ radius: newRadius });
+        }
+    };
+
+    const hasLocationFilter = filters.city.trim() !== '' || filters.state.trim() !== '';
 
     // Style Helpers
     const containerClass = darkMode 
@@ -61,12 +75,9 @@ export const FilterControls: React.FC<FilterControlsProps> = ({ filters, onFilte
                 <div className="sm:col-span-2 grid grid-cols-2 gap-4">
                     <input
                         type="text"
-                        placeholder="Cidade"
+                        placeholder="Cidade (ex: Santos)"
                         value={filters.city}
-                        onChange={(e) => {
-                            onFilterChange({ city: e.target.value });
-                            handleCityStateChange();
-                        }}
+                        onChange={(e) => handleLocationTextChange('city', e.target.value)}
                         className={`w-full px-3 py-2 border rounded-lg focus:ring-1 focus:outline-none transition ${inputClass}`}
                         disabled={disabled}
                     />
@@ -75,10 +86,7 @@ export const FilterControls: React.FC<FilterControlsProps> = ({ filters, onFilte
                         placeholder="UF"
                         value={filters.state}
                         maxLength={2}
-                        onChange={(e) => {
-                            onFilterChange({ state: e.target.value.toUpperCase() });
-                            handleCityStateChange();
-                        }}
+                        onChange={(e) => handleLocationTextChange('state', e.target.value.toUpperCase())}
                         className={`w-full px-3 py-2 border rounded-lg focus:ring-1 focus:outline-none transition ${inputClass}`}
                         disabled={disabled}
                     />
@@ -86,13 +94,13 @@ export const FilterControls: React.FC<FilterControlsProps> = ({ filters, onFilte
 
                 {/* Filtro Raio */}
                 <div>
-                    <label htmlFor="radius-filter" className={`block text-xs font-medium mb-1 uppercase tracking-wide ${labelClass}`}>Raio</label>
+                    <label htmlFor="radius-filter" className={`block text-xs font-medium mb-1 uppercase tracking-wide ${labelClass}`}>Raio (do seu GPS)</label>
                     <select
                         id="radius-filter"
                         value={filters.radius}
                         onChange={handleRadiusChange}
-                        className={`w-full px-3 py-2 border rounded-lg focus:ring-1 focus:outline-none transition disabled:opacity-50 ${inputClass}`}
-                        disabled={disabled || hasCityStateFilter}
+                        className={`w-full px-3 py-2 border rounded-lg focus:ring-1 focus:outline-none transition disabled:opacity-50 disabled:cursor-not-allowed ${inputClass}`}
+                        disabled={disabled || hasLocationFilter}
                     >
                         {radiusOptions.map(option => (
                             <option key={option.value} value={option.value}>{option.label}</option>
@@ -102,7 +110,7 @@ export const FilterControls: React.FC<FilterControlsProps> = ({ filters, onFilte
 
                 {/* Filtro Quantidade */}
                 <div>
-                    <label htmlFor="pagesize-filter" className={`block text-xs font-medium mb-1 uppercase tracking-wide ${labelClass}`}>Resultados</label>
+                    <label htmlFor="pagesize-filter" className={`block text-xs font-medium mb-1 uppercase tracking-wide ${labelClass}`}>Meta de Resultados</label>
                     <select
                         id="pagesize-filter"
                         value={filters.pageSize}
@@ -116,8 +124,13 @@ export const FilterControls: React.FC<FilterControlsProps> = ({ filters, onFilte
                     </select>
                 </div>
             </div>
-             {hasCityStateFilter && (
-                <p className={`text-xs mt-2 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>A busca por raio foi desabilitada pois Cidade/Estado está preenchido.</p>
+             {hasLocationFilter && (
+                <div className={`mt-3 p-3 rounded-lg text-sm flex items-start gap-2 border ${darkMode ? 'bg-blue-900/20 border-blue-800 text-blue-200' : 'bg-blue-50 border-blue-100 text-blue-700'}`}>
+                    <span className="text-lg leading-none">ℹ️</span>
+                    <span>
+                        O filtro de <strong>Raio</strong> foi desabilitado. A busca será focada na localização digitada (Cidade/UF) ao invés do seu GPS.
+                    </span>
+                </div>
             )}
         </div>
     );

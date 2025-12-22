@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 export default defineConfig(({ mode }) => {
   // Carrega as variáveis de ambiente baseadas no modo (ex: .env, .env.local)
   // O terceiro parâmetro '' garante que carregue todas as variáveis, não apenas as com prefixo VITE_
-  const env = loadEnv(mode, process.cwd(), '');
+  const env = loadEnv(mode, '.', '');
 
   return {
     plugins: [react()],
